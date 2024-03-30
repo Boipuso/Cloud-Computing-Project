@@ -1,0 +1,536 @@
+
+The link to the project in GEE: https://code.earthengine.google.com/c3616795d895adfc943a289261ae00f0 
+
+Down below you find the full code of the project. 
+
+
+
+// Cloud Computing Course (WS 23/24)
+// Henning Riecken (Mtr-Nr: 3022598)
+// henning.riecken@stud-mail.uni-wuerzburg.de
+// last updated on March 30th, 2024
+
+/*
+
+Backround: 
+Borneos rainforest are amongst the most damaged and diminished rainforests in the world. In recent decades, efforts were made but several environmental organization to preserve and restore these valuable forests. 
+The Borneo Nature Foundations currently conducts a long-term project studying reforestation in some of the most damaged rainforests of Borneo.
+They introduced study sites in selected areas in the Sebangau Nationalpark were they have planted well over 250.000 trees with the goal to identify the best tree species to reestablishe a healthy rainforest. In order to inspect the effectiveness of these measures, regular forest monitoring is mandatory.
+More information at https://www.borneonaturefoundation.org/project/reforestation/ 
+
+
+The projects aim is to map deforestation and afforestation using a random forest classification in the Sebangau Nationalpark, Kalimantan, Borneo from 2015 - 2023 and to inspect accuracy differences when adding indices- and SAR data to the optical bands. 
+
+Landsat8 scenes were processed for optical information and used to compute ndvi and ndwi information, while Sentinel2 scenes were deployed for radar (VV/VH) information. 
+The random forest function written allos´s to loop over different sets of bands serving as input for the classification and thus, allows to inspect changes in the implemented accuracy assessment in order to find the most suitable set of bands for the classification.  
+The resulting landcover(-change) maps are complemented with a legend, a calculation of the area of the respective landcover classes in sqkm and a yearly timeline of the mean ndvi value of the area for the years 2015 to 2023. 
+
+The code can easily be modified to inspect different areas, sets of bands or years of interest. 
+
+Included processing steps: 
+ 1. Import polygon for the Sebangau Nationalpark from the WDPA dataset
+ 2. Filter and pre-process (only SAR) Image Collections (S1 and S2) 
+ 3. Add indices to the image collections and create median composites for 2015 and 2023
+ 4. Merge SAR and Optical data  
+ 5. Write a function of a random forest classification for forest change detection and apply it to different sets of selected bands
+    (includes accuracy assessment and exportation of the results to Google Drive)
+ 6. Add a legend to the classification map
+ 7. Write a function to calculate the respective area per class in sqkm
+ 8. Assess median NDVI values per year from 2015-2023  
+
+*/
+
+
+///////////////////////////////////////////////////////////////////////
+//////////Import Sebangau Nationalpark as polygon//////////////////////
+///////////////////////////////////////////////////////////////////////
+
+// Load the WDPA dataset (contains polygons of protected areas worldwide)
+var wdpa = ee.FeatureCollection("WCMC/WDPA/current/polygons");
+
+// Filter the dataset to retrieve the Sebangau Nationalpark
+var Sebangau = wdpa.filter(ee.Filter.eq('NAME', 'Sebangau'));
+
+// Visualize the Sebangau Nationalpark
+Map.addLayer(Sebangau, {}, 'Sebangau Nationalpark',0);
+
+// Center the map on the Sebangau Nationalpark
+Map.centerObject(Sebangau, 10);
+
+
+////////////////////////////////////////////////////////////////////////
+//////////Load and filter the S1 GRD ImageCollection////////////////////
+////////////////////////////////////////////////////////////////////////
+
+// ImageCollection characteristics: C-Band (5.6cm); backscatter values are in log scale (db values)
+// Retrieve a VV and VH Imagecollection seperatly 
+
+// Filtering parameters: 
+// Area --> Sebangau Nationalpark
+// Mode --> IW 
+// Polarisation --> VV/VH (seperatly)
+// Orbit direction --> descending 
+// Resolution --> 10m
+// Date --> whole year 2015 and 2023  
+
+// Clip the extent to the Sebangau Nationalpark
+// Create median composite for each year 
+// Apply a speckle filter to reduce noise 
+
+// VV Collection
+var collectionVV = ee.ImageCollection('COPERNICUS/S1_GRD')
+.filter(ee.Filter.eq('instrumentMode', 'IW'))
+.filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
+.filter(ee.Filter.eq('orbitProperties_pass', 'DESCENDING')) 
+.filterMetadata('resolution_meters', 'equals' , 10)
+.filterBounds(Sebangau)
+.select('VV');
+
+print(collectionVV, 'Collection VV'); 
+
+// VH Collection 
+var collectionVH = ee.ImageCollection('COPERNICUS/S1_GRD')
+.filter(ee.Filter.eq('instrumentMode', 'IW'))
+.filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
+.filter(ee.Filter.eq('orbitProperties_pass', 'DESCENDING'))
+.filterMetadata('resolution_meters', 'equals' , 10)
+.filterBounds(Sebangau)
+.select('VH');
+
+ print(collectionVH, 'Collection VH'); 
+
+//Filter by date, create median composite and clip to Sebangau Nationalpark
+var VV2015 = collectionVV.filterDate('2015-01-01', '2015-12-31').median().clip(Sebangau);
+var VV2023 = collectionVV.filterDate('2023-01-01', '2023-12-31').median().clip(Sebangau);
+
+var VH2015 = collectionVH.filterDate('2015-01-01', '2015-12-31').median().clip(Sebangau);
+var VH2023 = collectionVH.filterDate('2023-01-01', '2023-12-31').median().clip(Sebangau);
+
+//Apply filter to reduce speckle and rename the VV and VH bands according to their year to be distinguishable once merched
+var SMOOTHING_RADIUS = 50;
+var VV2015_filtered = VV2015.focal_mean(SMOOTHING_RADIUS, 'circle', 'meters').select(['VV'],['VV_15']);
+var VV2023_filtered = VV2023.focal_mean(SMOOTHING_RADIUS, 'circle', 'meters').select(['VV'],['VV_23']);
+var VH2015_filtered = VH2015.focal_mean(SMOOTHING_RADIUS, 'circle', 'meters').select(['VH'],['VH_15']);
+var VH2023_filtered = VH2023.focal_mean(SMOOTHING_RADIUS, 'circle', 'meters').select(['VH'],['VH_23']);
+
+// Displaying the median images for VV and VH for 2015 and 2023
+Map.addLayer(VV2015_filtered, VisVV15, '2015 VV',0);
+Map.addLayer(VV2023_filtered, VisVV23, '2023 VV',0);
+Map.addLayer(VH2015_filtered, VisVH15, '2015 VH',0);
+Map.addLayer(VH2023_filtered, VisVH23, '2023 VH',0);
+
+
+////////////////////////////////////////////////////////////////////////
+//////////Load and filter the Landsat 8 ImageCollection////////////////////
+////////////////////////////////////////////////////////////////////////
+
+// Write and apply a cloud mask function 
+// Write and apply functions to include NDVI and NDWI
+
+// Filtering parameters: 
+// Area --> Sebangau Nationalpark
+// Cloud cover <= 30
+
+// Function to mask clouds and shadows for Landsat 8 data
+function maskL8Clouds(img) {
+  // Select the QA band
+  var QA_band = img.select(['QA_PIXEL']);
+  // searching bit values of 0 for bit 3(clouds) and bit 4(cloudshadow)
+  var cloudMask = QA_band.bitwiseAnd(1<<3).eq(0);
+  var shadowMask = QA_band.bitwiseAnd(1<<4).eq(0);
+  // Combine the cloud and shadow masks
+  var combinedMask = cloudMask.and(shadowMask);
+  // Mask the image with the combined mask
+  return img.updateMask(combinedMask);
+}
+
+// Functions to add NDVI and NDWI Bands
+function calcNDVI_15(img){
+  return img.addBands(img.normalizedDifference(['NIR_15','R_15']).rename('NDVI_15'));
+}
+ 
+ function calcNDWI_15(img){
+  return img.addBands(img.normalizedDifference(['G_15','NIR_15']).rename('NDWI_15'));
+}
+
+// Load and filter the L8 image collection for the year 2015, apply cloud function, apply NDVI/NDWI function and rename bands 
+var L8_15 = ee.ImageCollection("LANDSAT/LC08/C02/T1_L2")
+                  .filterBounds(Sebangau)
+                  .filterDate('2015-01-01', '2015-12-31')
+                  .filterMetadata('CLOUD_COVER','less_than',30)
+                  .map(maskL8Clouds)
+                  .select(['SR_B2','SR_B3','SR_B4','SR_B5','SR_B6','SR_B7'],['B_15','G_15','R_15','NIR_15','SWIR1_15','SWIR2_15'])
+                  .map(calcNDVI_15)
+                  .map(calcNDWI_15);
+
+print('Available L8 images in 2015: ', L8_15.size());
+
+// Reduce to median composite and clip to Sebangau Nationalpark
+var L8_15median = L8_15.median().clip(Sebangau);
+
+// Visualize the median composite
+Map.addLayer(L8_15median,VisL8_15,"L8 median 2015",0);
+
+
+//////// Do the same for the 2023 time period ///////////////
+
+// Functions to add NDVI and NDWI Bands
+function calcNDVI_23(img){
+  return img.addBands(img.normalizedDifference(['NIR_23','R_23']).rename('NDVI_23'));
+}
+ 
+ function calcNDWI_23(img){
+  return img.addBands(img.normalizedDifference(['G_23','NIR_23']).rename('NDWI_23'));
+}
+
+// Load and filter the L8 image collection for the year 2023, apply cloud function, apply NDVI/NDWI function and rename bands 
+var L8_23 = ee.ImageCollection("LANDSAT/LC08/C02/T1_L2")
+                  .filterBounds(Sebangau)
+                  .filterDate('2023-01-01', '2023-12-31')
+                  .filterMetadata('CLOUD_COVER','less_than',30)
+                  .map(maskL8Clouds)
+                  .select(['SR_B2','SR_B3','SR_B4','SR_B5','SR_B6','SR_B7'],['B_23','G_23','R_23','NIR_23','SWIR1_23','SWIR2_23'])
+                  .map(calcNDVI_23)
+                  .map(calcNDWI_23);
+
+print('Available L8 images in 2023: ', L8_23.size());
+
+// Reduce to median composite and clip to Sebangau Nationalpark
+var L8_23median = L8_23.median().clip(Sebangau);
+
+// Visualize the median composite
+Map.addLayer(L8_23median,VisL8_23,"L8 median 2023",0);
+
+
+//////////////////////////////////////////////////////////////////////
+/////// Fusing the SAR and optical data //////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+// The SAR data has to be resampled to meet the resolution of the optical data (30m)
+var VV2015_resampled = VV2015_filtered.resample('bicubic').reproject({
+  crs: L8_15median.select(0).projection(),
+  scale: 30
+});
+var VH2015_resampled = VH2015_filtered.resample('bicubic').reproject({
+  crs: L8_15median.select(0).projection(),
+  scale: 30
+});
+var VV2023_resampled = VV2023_filtered.resample('bicubic').reproject({
+  crs: L8_23median.select(0).projection(),
+  scale: 30
+});
+var VH2023_resampled = VH2023_filtered.resample('bicubic').reproject({
+  crs: L8_23median.select(0).projection(),
+  scale: 30
+});
+
+// Stack S1 and Landsat8 data
+var stackedImage2015 = ee.Image.cat(VV2015_resampled, VH2015_resampled, L8_15median);
+var stackedImage2023 = ee.Image.cat(VV2023_resampled, VH2023_resampled, L8_23median);
+
+// Display the stacked images
+print('Stacked Image 2015:', stackedImage2015);
+print('Stacked Image 2023:', stackedImage2023);
+
+// Create a multi-temporal stack of the fused images that contains all bands from both years 2015 and 2023
+var MultiTempStack = ee.Image.cat(stackedImage2015,stackedImage2023);
+print('MultiTempStack:', MultiTempStack);
+
+
+///////////////////////////////////////////////////////
+////////// Random Forest Classification////////////////
+///////////////////////////////////////////////////////
+
+// 50 points were collected for each of the classes : Forest, NonForest, Aforestation and Deforestation by 
+// comparing the NIR, SWIR1, Red - RGB composites of the 2015 and 2023 images 
+// Forest areas appear orange/red; NonForest areas appear yellow/green 
+
+////////// Preparing the training and validation points ////////////
+
+// Merge the collected landcover points to a feature collection
+var sample = Forest.merge(NonForest).merge(Aforestation).merge(Deforestation);
+
+// Overlay the point on the multi-temporal stack to include the band information in the feature collection.
+var sample = MultiTempStack.sampleRegions({
+  collection: sample, 
+  properties: ['landcover'], 
+  scale: 30,
+  geometries : true // coordinates maintained
+});
+
+// Create a column in the feature collection that assignes each feature a random value between 0-1 and define a seed number for reproducibility
+var sample = sample.randomColumn("random",5);
+
+// Every feature with a value of less than 0.66 (2/3) is collected as a training feature,
+// The rest is collected as validation features (1/3)
+var split = 0.66;
+var training = sample.filter(ee.Filter.lt("random",split));
+var validation = sample.filter(ee.Filter.gte("random",split));
+
+print('training features:', training);
+
+
+////////////// Writing the random forest function //////////////
+
+// The function allows to choose various sets of bands that are being used for the classification and give them a name
+// The function includes training the classifier, applying the classifier, and computing the accuracy of the classification
+
+var RFclassification = function(bands, name) {
+  // Train the classifier using the training features
+  var classifier = ee.Classifier.smileRandomForest(50).train({
+    features: training,  
+    classProperty: 'landcover', 
+    inputProperties: bands
+  });
+
+  // Classify the multi-temporal stack
+  var classification = MultiTempStack.select(bands).classify(classifier);
+
+  // Apply majority filter to filter out single pixels that have no adjacent pixels of the same class
+  // those pixels are usually falsely classified
+  var classificationFiltered = classification.focal_mode(1, "square");
+
+  // Clip the classification to the ROI (it won't be clipped otherwise, even though the input is clipped)
+  classificationFiltered = classificationFiltered.clip(Sebangau);
+  
+  // Classify validation points
+  var validated = validation.classify(classifier);
+  
+  // Compare reference and predicted classes
+  var testAccuracy = validated.errorMatrix('landcover', 'classification');
+
+  // Return the classified scenes, their corresponding accuracies and the respective names
+  return {classification: classificationFiltered, testAccuracy: testAccuracy, name: name};
+};
+
+////////////////// Define the different sets of bands to iterate over and name the sets //////////////////////
+var bandSets = [
+  {bands: ['NDVI_15', 'NDWI_15', 'NDVI_23', 'NDWI_23'], 
+    name: 'Indices'},
+  {bands: ['VV_15', 'VH_15', 'VV_23', 'VH_23'], 
+    name: 'SAR'},
+  {bands: ['VV_15', 'VH_15', 'VV_23', 'VH_23', 'B_15', 'G_15', 'R_15', 'NIR_15', 'SWIR1_15', 'SWIR2_15', 
+  'B_23', 'G_23', 'R_23', 'NIR_23', 'SWIR1_23', 'SWIR2_23'], 
+    name: 'Optical'},
+  {bands: ['B_15', 'G_15', 'R_15', 'NIR_15', 'SWIR1_15', 'SWIR2_15', 'NDVI_15', 'NDWI_15', 
+  'B_23', 'G_23', 'R_23', 'NIR_23', 'SWIR1_23', 'SWIR2_23', 'NDVI_23', 'NDWI_23'], 
+    name: 'Optical_Indices'},
+  {bands: ['VV_15', 'VH_15', 'VV_23', 'VH_23', 'B_15', 'G_15', 'R_15', 'NIR_15', 'SWIR1_15', 'SWIR2_15', 'NDVI_15', 'NDWI_15', 
+  'B_23', 'G_23', 'R_23', 'NIR_23', 'SWIR1_23', 'SWIR2_23', 'NDVI_23', 'NDWI_23'], 
+    name: 'Optical_Indices_SAR'},
+];
+
+/////////////// Iterate over the band sets to apply the RF classification //////////////////
+// also include accuracy assessment and exportation to Google Drive
+
+for (var i = 0; i < bandSets.length; i++) {
+  var set = bandSets[i];
+  
+  // Train, classify, and compute accuracy using the current set of bands
+  var result = RFclassification(set.bands, set.name);
+
+  // Add the classified layer to the map
+  Map.addLayer(result.classification, ClassVis, 'Classification ' + result.name);
+  
+  // Print error matrix and overall accuracy of the classification for the respective set of bands
+  print('Validation error matrix for ' + result.name + ': ', result.testAccuracy);
+  print('Validation overall accuracy for ' + result.name + ': ', result.testAccuracy.accuracy());
+  
+  // Export result to Google Drive
+Export.image.toDrive({
+  image : result.classification,
+  description : 'RF_classification_with_' + result.name + '_bands',
+  scale: 30,
+  region: Sebangau,
+  crs : 'EPSG:4326',
+  folder: 'GEE_exports'
+  });
+}
+
+
+///////////////////////////////////////////////////////////////
+///////////// Adding a legend to the classified image /////////
+///////////////////////////////////////////////////////////////
+
+// The code is copied and only slightly adjusted (change of classes and their colors) from the "classification lecture" slides
+
+var legend = ui.Panel({ 
+  style: { 
+    position: 'bottom-left', 
+    padding: '18px 25px'}}
+    );
+
+// Create legend title
+var legendTitle = ui.Label({ 
+  value: 'Forest Change 2015-2023', 
+  style: { 
+    fontWeight: 'bold', 
+    fontSize: '22px', 
+    margin: '0 0 15px 0', 
+    padding: ' 0 '}}
+    );
+
+// Add the title to the panel
+legend.add(legendTitle);
+// Creates and styles 1 row of the legend.
+var makeRow = function(color, name) { 
+  // Create the label that is actually the colored box. 
+  var colorBox = ui.Label({ 
+    style: { 
+      backgroundColor: color, 
+      // Use padding to give the box height and width. 
+      padding: '10px', 
+      margin: '0 0 5px 0'}
+      }); 
+    // Create the label filled with the description text. 
+    var description = ui.Label({ 
+      value: name, 
+      style: {margin: '0 0 4px 16px',}
+    });
+    // return the panel 
+    return ui.Panel({ 
+      widgets: [colorBox, description], 
+      layout: ui.Panel.Layout.Flow('horizontal')
+    });
+};
+// Palette with the colors
+var palette =['#89ff79', '#e8c900', '#00c304', '#ff0000'];
+// Name of the legend
+var names = ['Forest', 'NonForest', 'Aforestation', 'Deforestation'];
+// Add color and and names
+for (var i = 0; i < 4; i++) { 
+  legend.add(makeRow(palette[i], names[i]));
+}
+// Add legend to map (alternatively you can also print the legend to the console)
+Map.add(legend);
+var legend = ui.Panel({ 
+  style: { 
+    position: 'bottom-left', 
+    padding: '18px 25px'}
+});
+
+
+/////////////////////////////////////////////////////////////////////////////
+/////////calculate the respective area of the classes in sqkm ///////////////
+/////////////////////////////////////////////////////////////////////////////
+
+// Iterate over band sets
+for (var i = 0; i < bandSets.length; i++) {
+  
+  var set = bandSets[i];
+  
+  // the classification has to be conducted again in this function to retrieve results
+  var result = RFclassification(set.bands, set.name);
+
+// Define a scale for the calculation (30 meters)
+var scale = 30;
+
+// Define a dictionary of class names and their corresponding values in the classified image
+var classNames = {
+  'Forest': 1,
+  'NonForest': 2,
+  'Aforestation': 3,
+  'Deforestation': 4
+};
+
+// Create an empty list to store the area per class
+var areaList = [];
+
+// Iterate over the class names
+for (var Name in classNames) {
+  // Filter the classified image for the current class
+  var classImage = result.classification.eq(classNames[Name]);
+  
+  // Compute the area for the current class
+  var area = classImage.multiply(ee.Image.pixelArea()).rename('area');
+  
+  // Reduce the region to compute the total area in square meters
+  var classArea = area.reduceRegion({
+    reducer: ee.Reducer.sum(),
+    geometry: Sebangau,
+    scale: scale,
+    maxPixels: 1e13 
+  });
+  
+  // Get the total area in square kilometers
+  var areaSqkm = ee.Number(classArea.get('area')).divide(1e6); 
+  
+  // Add the class name and area value to the list
+  areaList.push([Name, areaSqkm]);
+}
+
+// Print the area per class for the classifications with different sets of bands
+print('Area per class for ' + result.name + ' in sqkm: ', areaList);
+
+}
+
+
+////////////////////////////////////////////////////////////////////////////
+//////////// create median observation of NDVI values per whole year ///////
+////////////////////////////////////////////////////////////////////////////
+
+// This code snippet was included to offer additional information for the interpretation of the 
+// change value of the deforested and aforested area.
+
+// Function to add NDVI band
+function calcNDVI(img){
+  return img.addBands(img.normalizedDifference(['NIR','R']).rename('NDVI'));
+}
+
+// Load and filter the L8 image collection
+var L8 = ee.ImageCollection("LANDSAT/LC08/C02/T1_L2")
+                  .filterBounds(Sebangau)
+                  .filterDate('2015-01-01', '2023-12-31')
+                  .filterMetadata('CLOUD_COVER','less_than',30)
+                  .map(maskL8Clouds)
+                  .select(['SR_B2','SR_B3','SR_B4','SR_B5','SR_B6','SR_B7'],['B','G','R','NIR','SWIR1','SWIR2'])
+                  .map(calcNDVI);
+
+// Define the years of interest as a sequence 
+var years = ee.List.sequence(2015, 2023);
+
+// Create a median image per year
+var Annual_col = ee.ImageCollection.fromImages(
+years.map(function(y) {
+
+// Filter by year
+var current_year = L8
+.filter(ee.Filter.calendarRange(y, y, 'year'));
+
+// Check number of images within one year
+var year_size = current_year.size();
+
+// Get the middle image of the collection for the system:time_start info
+var year_size_div = year_size.divide(2);
+var year_size_div_round = year_size_div.round();
+var current_year_list = current_year.toList(current_year.size());
+var current_mid = current_year_list.get(year_size_div_round);
+
+// Return median of current year and define the current year, date and the unix time of the middle image wihtin the year
+return current_year
+.median()
+.set('Year', y)
+.set('No_of_images', year_size)
+.copyProperties(ee.Image(current_mid),['system:time_start']);
+})
+);
+
+// Create a time-series chart
+var my_chart = ui.Chart.image.series({imageCollection: Annual_col.select('NDVI'),
+region: Sebangau,
+reducer: ee.Reducer.mean(),
+scale: 30
+})
+.setChartType('ScatterChart')
+.setOptions({
+title: 'Annual NDVI',
+vAxis: {title: 'NDVI'},
+hAxis: {title: 'Date'},
+pointSize: 2,
+lineSize: 1,
+trendlines: {0: {color: 'red'}}
+});
+print(my_chart);
+
+
+
