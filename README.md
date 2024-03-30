@@ -15,3 +15,5 @@ The random forest function written allos´s to loop over different sets of bands
 The resulting landcover(-change) maps are complemented with a legend, a calculation of the area of the respective landcover classes in sqkm and a yearly timeline of the mean ndvi value of the area for the years 2015 to 2023. 
 
 The code can easily be modified to inspect different areas, sets of bands or years of interest. 
+
+This link directs you to the prject in GEE: https://code.earthengine.google.com/c3616795d895adfc943a289261ae00f0
