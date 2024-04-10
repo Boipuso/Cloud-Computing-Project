@@ -15,4 +15,4 @@ The resulting landcover(-change) maps are complemented with a legend, a calculat
 
 The code can easily be modified to inspect different areas, sets of bands or years of interest. 
 
-This link directs you to the project in GEE: https://code.earthengine.google.com/c3616795d895adfc943a289261ae00f0
+This link directs you to the project in GEE: [https://code.earthengine.google.com/c3616795d895adfc943a289261ae00f0](https://code.earthengine.google.com/d62b6283a9d43c6f6f8b9cf04dfd977f)
